@@ -24,7 +24,9 @@ jobs:
       - name: Checkout Repository
         run: |
           git init
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+          #git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+          git remote add origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
+          
           git fetch origin ${BASE_BRANCH}
           git checkout ${BASE_BRANCH}
 
