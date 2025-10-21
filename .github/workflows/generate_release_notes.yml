@@ -49,17 +49,17 @@ jobs:
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-      - name: Create Tag and Push
+      - name: Create and push tag
         env:
-          #GIT_USER: github-actions[bot]
-          #GIT_EMAIL: github-actions[bot]@users.noreply.github.com
           GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
         run: |
+          echo "Token length: ${#GITHUB_TOKEN}"  # Should show a number > 0
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git tag -a "${TAG_NAME}" -m "Tag created for ${PR_TITLE}"
           git push origin "${TAG_NAME}"
+
 
       - name: Create Release with Auto Notes
         run: |
