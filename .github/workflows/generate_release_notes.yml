@@ -47,7 +47,12 @@ jobs:
           echo "Tag to create: ${TAG_NAME}"
 
       - name: Create Tag and Push
+        env:
+          GIT_USER: github-actions[bot]
+          GIT_EMAIL: github-actions[bot]@users.noreply.github.com
         run: |
+          git config --global user.name "${GIT_USER}"
+          git config --global user.email "${GIT_EMAIL}"
           git tag -a "${TAG_NAME}" -m "Tag created for ${PR_TITLE}"
           git push origin "${TAG_NAME}"
 
