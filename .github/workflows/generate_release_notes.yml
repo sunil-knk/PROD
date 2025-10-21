@@ -51,13 +51,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
       - name: Create Tag and Push
         env:
-          GIT_USER: github-actions[bot]
-          GIT_EMAIL: github-actions[bot]@users.noreply.github.com
+          #GIT_USER: github-actions[bot]
+          #GIT_EMAIL: github-actions[bot]@users.noreply.github.com
           GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
         run: |
-          git config --global user.name "${GIT_USER}"
-          git config --global user.email "${GIT_EMAIL}"
-          git remote add origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
           git tag -a "${TAG_NAME}" -m "Tag created for ${PR_TITLE}"
           git push origin "${TAG_NAME}"
 
