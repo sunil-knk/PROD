@@ -57,6 +57,8 @@ jobs:
         run: |
           git config --global user.name "${GIT_USER}"
           git config --global user.email "${GIT_EMAIL}"
+          #git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          git remote set-url origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
           git tag -a "${TAG_NAME}" -m "Tag created for ${PR_TITLE}"
           git push origin "${TAG_NAME}"
 
