@@ -45,7 +45,10 @@ jobs:
           TAG_NAME=$(echo "${RELEASE_BRANCH}" | sed 's|release/||')
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
           echo "Tag to create: ${TAG_NAME}"
-
+      - name: Configure Git user
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
       - name: Create Tag and Push
         env:
           GIT_USER: github-actions[bot]
