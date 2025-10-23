@@ -1,0 +1,130 @@
+name: deploy-sprint-release
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+jobs:
+  parse_issue:
+    if: startsWith(github.event.issue.title, 'Sprint Release:')
+    runs-on: ubuntu-latest
+    outputs:
+      release_branch: ${{ steps.parse.outputs.release_branch }}
+      feature_branches: ${{ steps.parse.outputs.feature_branches }}
+      target_branch: ${{ steps.parse.outputs.target_branch }}
+    steps:
+      - name: Show raw issue content
+        run: |
+          echo "===== ISSUE TITLE ====="
+          echo "${{ github.event.issue.title }}"
+          echo
+          echo "===== ISSUE BODY ====="
+          echo "${{ github.event.issue.body }}"
+
+      - name: Parse fields from issue body
+        id: parse
+        run: |
+          body="${{ github.event.issue.body }}"
+
+          release_branch=$(echo "$body" | grep -E '^release/' | head -n 1 || true)
+          target_branch=$(echo "$body" | grep -E '^(DEV|UAT|PROD)$' || true)
+          feature_branches=$(echo "$body" | grep -E '^feature/' || true)
+
+          echo "release_branch=$release_branch" >> $GITHUB_OUTPUT
+          echo "target_branch=$target_branch" >> $GITHUB_OUTPUT
+          echo "feature_branches<<EOF" >> $GITHUB_OUTPUT
+          echo "$feature_branches" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Display parsed values
+        run: |
+          echo "Release Branch: ${{ steps.parse.outputs.release_branch }}"
+          echo "Target Branch: ${{ steps.parse.outputs.target_branch }}"
+          echo "Feature Branches:"
+          echo "${{ steps.parse.outputs.feature_branches }}"
+
+  release-features:
+    runs-on: ubuntu-latest
+    needs: parse_issue
+    env:
+      RELEASE_BRANCH: ${{ needs.parse_issue.outputs.release_branch }}
+      TARGET_BRANCH: ${{ needs.parse_issue.outputs.target_branch }}
+      FEATURE_BRANCHES: ${{ needs.parse_issue.outputs.feature_branches }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Initialize repository
+        run: |
+          echo "Cloning $REPO ..."
+          git init
+          git remote add origin https://github.com/${REPO}.git
+          git fetch origin --tags
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release branch from target branch
+        run: |
+          git checkout -b $RELEASE_BRANCH origin/$TARGET_BRANCH
+
+      - name: Merge feature branches into release branch
+        id: merge
+        run: |
+          echo "Merging feature branches into $RELEASE_BRANCH ..."
+          error_message=""
+          echo "$FEATURE_BRANCHES" | while read feature_branch; do
+            [ -z "$feature_branch" ] && continue
+            echo "Merging $feature_branch ..."
+            if git fetch origin $feature_branch && git merge --no-ff --squash origin/$feature_branch -m "Merged $feature_branch into $RELEASE_BRANCH"; then
+              echo "Merged $feature_branch successfully."
+            else
+              echo "⚠️ Conflict in $feature_branch"
+              error_message+="Conflict detected when merging $feature_branch into $RELEASE_BRANCH\n"
+              git merge --abort || true
+            fi
+          done
+          git push origin $RELEASE_BRANCH
+          echo "error_message=$error_message" >> $GITHUB_OUTPUT
+
+      - name: Fail if merge conflicts
+        if: ${{ steps.merge.outputs.error_message != '' }}
+        run: |
+          echo -e "${{ steps.merge.outputs.error_message }}"
+          exit 1
+
+  create-pull-request:
+    runs-on: ubuntu-latest
+    needs: [release-features, parse_issue]
+    env:
+      RELEASE_BRANCH: ${{ needs.parse_issue.outputs.release_branch }}
+      TARGET_BRANCH: ${{ needs.parse_issue.outputs.target_branch }}
+      FEATURE_BRANCHES: ${{ needs.parse_issue.outputs.feature_branches }}
+      REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Create Pull Request with feature list in body
+        run: |
+          echo "Creating Pull Request from $RELEASE_BRANCH to $TARGET_BRANCH"
+
+          # Prepare PR body with feature list
+          body="### Features included in this release:
+$(echo "$FEATURE_BRANCHES" | sed 's/^/- /')"
+
+          pr_data=$(curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/pulls \
+            -d "$(jq -n \
+                --arg title "Sprint Release: $RELEASE_BRANCH to $TARGET_BRANCH" \
+                --arg head "$RELEASE_BRANCH" \
+                --arg base "$TARGET_BRANCH" \
+                --arg body "$body" \
+                '{title: $title, head: $head, base: $base, body: $body}')")
+
+          pr_number=$(echo "$pr_data" | grep '"number":' | head -1 | awk '{print $2}' | tr -d ',')
+          if [ -z "$pr_number" ]; then
+            echo "Failed to create Pull Request. Response:"
+            echo "$pr_data"
+            exit 1
+          fi
+
+          echo "✅ Pull Request #$pr_number created successfully."
