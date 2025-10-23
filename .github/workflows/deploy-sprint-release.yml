@@ -106,8 +106,7 @@ jobs:
           echo "Creating Pull Request from $RELEASE_BRANCH to $TARGET_BRANCH"
 
           # Prepare PR body with feature list
-          body="### Features included in this release:
-$(echo "$FEATURE_BRANCHES" | sed 's/^/- /')"
+          body="### Features included in this release: $(echo "$FEATURE_BRANCHES" | sed 's/^/- /')"
 
           pr_data=$(curl -s -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
