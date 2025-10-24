@@ -9,9 +9,9 @@ jobs:
     if: startsWith(github.event.issue.title, 'Sprint Release:')
     runs-on: ubuntu-latest
     outputs:
-      release_branch: ${{ steps.parse.outputs.release_branch }}
-      feature_branches: ${{ steps.parse.outputs.feature_branches }}
-      target_branch: ${{ steps.parse.outputs.target_branch }}
+      release_branch: 'release/sprint_19'
+      feature_branches: 'feature/testing_1'
+      target_branch: 'main'
     steps:
       - name: Show raw issue content
         run: |
