@@ -99,7 +99,7 @@ jobs:
       TARGET_BRANCH: ${{ needs.parse_issue.outputs.target_branch }}
       FEATURE_BRANCHES: ${{ needs.parse_issue.outputs.feature_branches }}
       REPO: ${{ github.repository }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
     steps:
       - name: Create Pull Request with feature list in body
         run: |
