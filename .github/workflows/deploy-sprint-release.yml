@@ -11,7 +11,7 @@ jobs:
     outputs:
       release_branch: 'release/sprint_19'
       feature_branches: 'feature/testing_1'
-      target_branch: 'main'
+      target_branch: 'qa'
     steps:
       - name: Show raw issue content
         run: |
