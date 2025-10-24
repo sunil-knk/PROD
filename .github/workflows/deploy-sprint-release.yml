@@ -56,7 +56,7 @@ jobs:
         run: |
           echo "Cloning $REPO ..."
           git init
-          git remote set-url origin https://${{ github.actor }}:${{ secrets.SUNIL1_TOKEN }}@github.com/${REPO}.git
+          git remote add origin https://${{ github.actor }}:${{ secrets.SUNIL1_TOKEN }}@github.com/${REPO}.git
           git fetch origin --tags
           git fetch origin +refs/heads/*:refs/remotes/origin/*
           git config --global user.name "github-actions[bot]"
