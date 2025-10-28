@@ -11,7 +11,7 @@ jobs:
     outputs:
       release_branch: 'release/sprint_19'
       feature_branches: 'feature/testing_1'
-      target_branch: 'main'
+      target_branch: 'qa'
     steps:
       - name: Show raw issue content
         run: |
@@ -56,7 +56,7 @@ jobs:
         run: |
           echo "Cloning $REPO ..."
           git init
-          git remote add origin https://github.com/${REPO}.git
+          git remote add origin https://${{ github.actor }}:${{ secrets.SUNIL1_TOKEN }}@github.com/${REPO}.git
           git fetch origin --tags
           git fetch origin +refs/heads/*:refs/remotes/origin/*
           git config --global user.name "github-actions[bot]"
@@ -74,7 +74,7 @@ jobs:
           echo "$FEATURE_BRANCHES" | while read feature_branch; do
             [ -z "$feature_branch" ] && continue
             echo "Merging $feature_branch ..."
-            if git fetch origin $feature_branch && git merge --no-ff --squash origin/$feature_branch -m "Merged $feature_branch into $RELEASE_BRANCH"; then
+            if git fetch origin $feature_branch && git merge --squash origin/$feature_branch -m "Merged $feature_branch into $RELEASE_BRANCH"; then
               echo "Merged $feature_branch successfully."
             else
               echo "⚠️ Conflict in $feature_branch"
@@ -99,7 +99,7 @@ jobs:
       TARGET_BRANCH: ${{ needs.parse_issue.outputs.target_branch }}
       FEATURE_BRANCHES: ${{ needs.parse_issue.outputs.feature_branches }}
       REPO: ${{ github.repository }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
     steps:
       - name: Create Pull Request with feature list in body
         run: |
