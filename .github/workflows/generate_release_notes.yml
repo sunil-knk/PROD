@@ -1,5 +1,4 @@
-name: Production Release Tag
-
+name: 05th november 2025
 on:
   pull_request:
     types: [closed]
