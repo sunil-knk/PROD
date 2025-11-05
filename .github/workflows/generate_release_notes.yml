@@ -1,4 +1,4 @@
-name: 05th november 2025
+name: Production Release Tag
 
 on:
   pull_request:
@@ -19,7 +19,7 @@ jobs:
         run: |
           git init
           git remote add origin https://github.com/${{ github.repository }}.git
-          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+          git fetch origin --tags --prune
           git fetch origin +refs/heads/*:refs/remotes/origin/*
           git checkout origin/${TARGET_BRANCH}
 
@@ -36,35 +36,35 @@ jobs:
             echo "LAST_TAG=none" >> $GITHUB_ENV
             echo "NEW_TAG=sprint_1" >> $GITHUB_ENV
           else
-            NUM=$(echo $LAST_TAG | grep -o '[0-9]*$')
+            NUM=$(echo "$LAST_TAG" | grep -o '[0-9]*$')
             NEXT=$((NUM + 1))
             echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
             echo "NEW_TAG=sprint_${NEXT}" >> $GITHUB_ENV
           fi
 
-      - name: Get only direct commits from target branch
+      - name: Get commits only from target branch since last tag
         id: commits
         run: |
-          echo "Fetching direct commits from ${TARGET_BRANCH}..."
-          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+          if [ "$LAST_TAG" = "none" ]; then
+            echo "No previous tag found — taking initial commits from ${TARGET_BRANCH}"
+            RANGE="origin/${TARGET_BRANCH}"
+          else
+            RANGE="${LAST_TAG}..origin/${TARGET_BRANCH}"
+          fi
 
-          # List commits only from the target branch, excluding merges
-          COMMITS=$(git log origin/${TARGET_BRANCH} --pretty=format:"%h %s" --no-merges)
+          echo "Getting commits from range: $RANGE"
 
-          # Exclude merges or cross-branch messages
-          FILTERED_COMMITS=$(echo "$COMMITS" | grep -Ev "Merge branch|Merge pull request|from feature/|from release/|from hotfix/|cherry picked from commit" || true)
+          # Only commits from test/PROD, excluding merges from other branches
+          COMMITS=$(git log $RANGE --pretty=format:"%h %s" --no-merges | grep -Ev "from (feature/|release/|hotfix/)" || true)
 
-          # Remove duplicates
-          UNIQUE_COMMITS=$(echo "$FILTERED_COMMITS" | awk '!seen[$1]++')
+          if [ -z "$COMMITS" ]; then
+            echo "No valid commits found in ${TARGET_BRANCH} since ${LAST_TAG}."
+            COMMITS="No new commits found in ${TARGET_BRANCH} since last release."
+          fi
 
-          echo "Filtered commits (direct commits only):"
-          echo "$UNIQUE_COMMITS"
-
-          {
-            echo "COMMITS<<EOF"
-            echo "$UNIQUE_COMMITS"
-            echo "EOF"
-          } >> $GITHUB_ENV
+          echo "COMMITS<<EOF" >> $GITHUB_ENV
+          echo "$COMMITS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Create release via GitHub API
         env:
@@ -73,14 +73,15 @@ jobs:
           echo "Creating release with tag: $NEW_TAG"
           API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
 
-          # Escape newlines and quotes for JSON safety
-          SAFE_BODY=$(echo "${COMMITS}" | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+          # Escape for JSON
+          SAFE_BODY=$(echo "${COMMITS}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
 
+          # Build JSON payload safely
           PAYLOAD=$(jq -n \
             --arg tag_name "$NEW_TAG" \
             --arg target_commitish "$TARGET_BRANCH" \
-            --arg name "$NEW_TAG" \
-            --arg body "Automated release notes for $NEW_TAG\n\nCommits:\n$SAFE_BODY" \
+            --arg name "Sprint Release: $NEW_TAG" \
+            --arg body "## Release Notes for $TARGET_BRANCH\n\nCommits:\n$SAFE_BODY" \
             '{
               tag_name: $tag_name,
               target_commitish: $target_commitish,
@@ -90,7 +91,7 @@ jobs:
             }'
           )
 
-          echo "Payload being sent:"
+          echo "Payload to be sent:"
           echo "$PAYLOAD" | jq '.'
 
           RESPONSE=$(curl -s -o response.json -w "%{http_code}" -X POST "$API_URL" \
@@ -103,7 +104,7 @@ jobs:
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "✅ Release created successfully."
           else
-            echo "❌ Failed to create release. HTTP $HTTP_CODE"
+            echo "❌ Failed to create release (HTTP $HTTP_CODE)"
             echo "Response:"
             cat response.json
             exit 1
