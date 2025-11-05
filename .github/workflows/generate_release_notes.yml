@@ -69,7 +69,7 @@ jobs:
 
       - name: Create release via GitHub API
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_: ${{ secrets.SUNIL2_TOKEN }}
         run: |
           echo "Creating release with tag: $NEW_TAG"
           API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
@@ -79,7 +79,7 @@ jobs:
             "${COMMITS}")
 
           curl -s -X POST "$API_URL" \
-            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Authorization: Bearer $GH_" \
             -H "Accept: application/vnd.github+json" \
             -d "{
               \"tag_name\": \"$NEW_TAG\",
