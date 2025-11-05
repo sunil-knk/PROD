@@ -1,76 +1,93 @@
-name: 21stoct2025
+name: Production Release Tag
 
 on:
   pull_request:
     types: [closed]
     branches:
-      - main
+      - test/PROD
 
 jobs:
-  create_release:
-    if: >
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.title, 'Sprint Release:')
+  create-prod-release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Sprint Release:')
     runs-on: ubuntu-latest
 
     env:
-      GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
-      REPO: ${{ github.repository }}
-      PR_TITLE: ${{ github.event.pull_request.title }}
-      BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
-      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      TARGET_BRANCH: test/PROD
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         run: |
           git init
-          #git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
-          git remote add origin https://${{ secrets.SUNIL1_TOKEN }}@github.com/sunil-knk/PROD.git
-          
-          git fetch origin ${BASE_BRANCH}
-          git checkout ${BASE_BRANCH}
+          git remote add origin https://github.com/${{ github.repository }}.git
+          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+          git checkout origin/${TARGET_BRANCH}
 
-      - name: Extract Release Branch Name
+      - name: Configure Git identity
         run: |
-          echo "Pull Request Title: ${PR_TITLE}"
-          RELEASE_BRANCH=$(echo "${PR_TITLE}" | grep -oE 'release/[a-zA-Z0-9._-]+')
-          if [ -z "$RELEASE_BRANCH" ]; then
-            echo "No valid release branch name found in PR title. Exiting."
-            exit 0
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Find latest sprint tag
+        id: get_tag
+        run: |
+          LAST_TAG=$(git tag --list 'sprint_*' | sort -V | tail -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "LAST_TAG=none" >> $GITHUB_ENV
+            echo "NEW_TAG=sprint_1" >> $GITHUB_ENV
+          else
+            NUM=$(echo $LAST_TAG | grep -o '[0-9]*$')
+            NEXT=$((NUM + 1))
+            echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
+            echo "NEW_TAG=sprint_${NEXT}" >> $GITHUB_ENV
           fi
-          echo "RELEASE_BRANCH=${RELEASE_BRANCH}" >> $GITHUB_ENV
 
-      - name: Generate Tag Name
+      - name: Get only direct commits from target branch
+        id: commits
         run: |
-          TAG_NAME=$(echo "${RELEASE_BRANCH}" | sed 's|release/||')
-          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
-          echo "Tag to create: ${TAG_NAME}"
-      - name: Configure Git user
-        run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-      - name: Create and push tag
+          echo "Fetching direct commits from ${TARGET_BRANCH}..."
+
+          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+
+          # List commits only from the target branch, excluding merges
+          COMMITS=$(git log origin/${TARGET_BRANCH} --pretty=format:"%h %s" --no-merges)
+
+          # Exclude merges, cherry-picks, rebased commits, or cross-branch merges
+          FILTERED_COMMITS=$(echo "$COMMITS" | grep -Ev "Merge branch|Merge pull request|from feature/|from release/|from hotfix/|cherry picked from commit" || true)
+
+          # Remove duplicate SHAs in case of rebase
+          UNIQUE_COMMITS=$(echo "$FILTERED_COMMITS" | awk '!seen[$1]++')
+
+          echo "Filtered commits (direct commits only):"
+          echo "$UNIQUE_COMMITS"
+
+          {
+            echo "COMMITS<<EOF"
+            echo "$UNIQUE_COMMITS"
+            echo "EOF"
+          } >> $GITHUB_ENV
+
+      - name: Create release via GitHub API
         env:
-          GITHUB_TOKEN: ${{ secrets.SUNIL1_TOKEN }}
+          GH_TOKEN: ${{ secrets.SUNIL2_TOKEN }}
         run: |
-          echo "Token length: ${#GITHUB_TOKEN}"  # Should show a number > 0
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
-          git tag -a "${TAG_NAME}" -m "Tag created for ${PR_TITLE}"
-          git push origin "${TAG_NAME}"
+          echo "Creating release with tag: $NEW_TAG"
+          API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
 
+          RELEASE_BODY=$(printf "%s\n\nCommits in this release:\n%s" \
+            "Automated release notes for ${NEW_TAG}" \
+            "${COMMITS}")
 
-      - name: Create Release with Auto Notes
-        run: |
-          echo "Creating GitHub Release for ${TAG_NAME}"
-          API_URL="https://api.github.com/repos/${REPO}/releases"
-          PAYLOAD=$(jq -n \
-            --arg tag_name "$TAG_NAME" \
-            --arg name "$TAG_NAME" \
-            '{ tag_name: $tag_name, name: $name, generate_release_notes: true }')
-          
-          curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" \
-               -H "Accept: application/vnd.github+json" \
-               -d "$PAYLOAD" "$API_URL"
-               
+          curl -s -X POST "$API_URL" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{
+              \"tag_name\": \"$NEW_TAG\",
+              \"target_commitish\": \"${TARGET_BRANCH}\",
+              \"name\": \"$NEW_TAG\",
+              \"body\": \"$RELEASE_BODY\",
+              \"generate_release_notes\": true
+            }"
+
+      - name: Confirm release creation
+        run: echo "Release $NEW_TAG created successfully for branch ${TARGET_BRANCH}"
