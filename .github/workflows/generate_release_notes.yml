@@ -1,4 +1,4 @@
-name: Production Release Tag
+name: 05th november 2025
 
 on:
   pull_request:
@@ -46,16 +46,15 @@ jobs:
         id: commits
         run: |
           echo "Fetching direct commits from ${TARGET_BRANCH}..."
-
           git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
 
           # List commits only from the target branch, excluding merges
           COMMITS=$(git log origin/${TARGET_BRANCH} --pretty=format:"%h %s" --no-merges)
 
-          # Exclude merges, cherry-picks, rebased commits, or cross-branch merges
+          # Exclude merges or cross-branch messages
           FILTERED_COMMITS=$(echo "$COMMITS" | grep -Ev "Merge branch|Merge pull request|from feature/|from release/|from hotfix/|cherry picked from commit" || true)
 
-          # Remove duplicate SHAs in case of rebase
+          # Remove duplicates
           UNIQUE_COMMITS=$(echo "$FILTERED_COMMITS" | awk '!seen[$1]++')
 
           echo "Filtered commits (direct commits only):"
@@ -69,25 +68,46 @@ jobs:
 
       - name: Create release via GitHub API
         env:
-          GH_: ${{ secrets.SUNIL2_TOKEN }}
+          GH_TOKEN: ${{ secrets.SUNIL2_TOKEN }}
         run: |
           echo "Creating release with tag: $NEW_TAG"
           API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
 
-          RELEASE_BODY=$(printf "%s\n\nCommits in this release:\n%s" \
-            "Automated release notes for ${NEW_TAG}" \
-            "${COMMITS}")
+          # Escape newlines and quotes for JSON safety
+          SAFE_BODY=$(echo "${COMMITS}" | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
 
-          curl -s -X POST "$API_URL" \
-            -H "Authorization: Bearer $GH_" \
+          PAYLOAD=$(jq -n \
+            --arg tag_name "$NEW_TAG" \
+            --arg target_commitish "$TARGET_BRANCH" \
+            --arg name "$NEW_TAG" \
+            --arg body "Automated release notes for $NEW_TAG\n\nCommits:\n$SAFE_BODY" \
+            '{
+              tag_name: $tag_name,
+              target_commitish: $target_commitish,
+              name: $name,
+              body: $body,
+              generate_release_notes: true
+            }'
+          )
+
+          echo "Payload being sent:"
+          echo "$PAYLOAD" | jq '.'
+
+          RESPONSE=$(curl -s -o response.json -w "%{http_code}" -X POST "$API_URL" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            -d "{
-              \"tag_name\": \"$NEW_TAG\",
-              \"target_commitish\": \"${TARGET_BRANCH}\",
-              \"name\": \"$NEW_TAG\",
-              \"body\": \"$RELEASE_BODY\",
-              \"generate_release_notes\": true
-            }"
+            -d "$PAYLOAD")
+
+          HTTP_CODE=$(tail -n1 <<< "$RESPONSE")
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Release created successfully."
+          else
+            echo "❌ Failed to create release. HTTP $HTTP_CODE"
+            echo "Response:"
+            cat response.json
+            exit 1
+          fi
 
       - name: Confirm release creation
         run: echo "Release $NEW_TAG created successfully for branch ${TARGET_BRANCH}"
