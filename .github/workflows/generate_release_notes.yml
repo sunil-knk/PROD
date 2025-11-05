@@ -1,4 +1,4 @@
-name: Auto Tag and Release (test/PROD only)
+name: Production Release Tag
 
 on:
   pull_request:
@@ -6,124 +6,88 @@ on:
     branches:
       - test/PROD
 
-permissions:
-  contents: write
-
 jobs:
-  create-release:
-    if: >
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.title, 'Sprint Release:')
+  create-prod-release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Sprint Release:')
     runs-on: ubuntu-latest
+
     env:
-      REPO: ${{ github.repository }}
       TARGET_BRANCH: test/PROD
-      GITHUB_API: https://api.github.com
 
     steps:
-      - name: Checkout repository (all history & tags)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup git identity
+      - name: Checkout repository
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git init
+          git remote add origin https://github.com/${{ github.repository }}.git
+          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+          git checkout origin/${TARGET_BRANCH}
 
-      - name: Determine next sprint tag
-        id: next_tag
+      - name: Configure Git identity
         run: |
-          # pick latest sprint tag (sprint_N) and increment
-          LATEST=$(git ls-remote --tags origin | awk -F/ '/refs\/tags\/sprint_/{print $NF}' | sort -V | tail -n1)
-          if [ -z "$LATEST" ]; then
-            NEXT_TAG="sprint_1"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Find latest sprint tag
+        id: get_tag
+        run: |
+          LAST_TAG=$(git tag --list 'sprint_*' | sort -V | tail -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "LAST_TAG=none" >> $GITHUB_ENV
+            echo "NEW_TAG=sprint_1" >> $GITHUB_ENV
           else
-            NUM=$(echo "$LATEST" | grep -oE '[0-9]+$' || echo 0)
-            NEXT_TAG="sprint_$((NUM + 1))"
-          fi
-          echo "next_tag=$NEXT_TAG" >> $GITHUB_OUTPUT
-          echo "Determined NEXT_TAG: $NEXT_TAG"
-
-      - name: Resolve commit SHA for test/PROD (remote)
-        id: get_sha
-        run: |
-          # fetch the remote branch head (shallow)
-          git fetch origin $TARGET_BRANCH --depth=1
-          # get the commit SHA that HEAD of origin/test/PROD points to
-          COMMIT_SHA=$(git rev-parse FETCH_HEAD)
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-          echo "Using commit SHA from $TARGET_BRANCH: $COMMIT_SHA"
-
-      - name: Check if tag already exists remotely (idempotent)
-        id: tag_exists
-        run: |
-          TAG=${{ steps.next_tag.outputs.next_tag }}
-          # check remote tags
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag $TAG already exists on remote. Skipping creation."
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Tag $TAG does not exist yet."
+            NUM=$(echo $LAST_TAG | grep -o '[0-9]*$')
+            NEXT=$((NUM + 1))
+            echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
+            echo "NEW_TAG=sprint_${NEXT}" >> $GITHUB_ENV
           fi
 
-      - name: Create and push tag from test/PROD commit (if not exists)
-        if: steps.tag_exists.outputs.exists == 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.SUNIL2_TOKEN }}
+      - name: Get only direct commits from target branch
+        id: commits
         run: |
-          TAG=${{ steps.next_tag.outputs.next_tag }}
-          SHA=${{ steps.get_sha.outputs.commit_sha }}
-          echo "Creating annotated tag $TAG at $SHA"
-          git tag -a "$TAG" "$SHA" -m "Sprint release $TAG (from $TARGET_BRANCH $SHA)"
-          # push using token (use x-access-token or personal token); GITHUB_TOKEN has push rights when permissions: contents write
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" "refs/tags/$TAG"
+          echo "Fetching direct commits from ${TARGET_BRANCH}..."
 
-      - name: Create GitHub Release using API (tag must exist in repo)
+          git fetch origin --tags --prune --unshallow || git fetch origin --tags --prune
+
+          # List commits only from the target branch, excluding merges
+          COMMITS=$(git log origin/${TARGET_BRANCH} --pretty=format:"%h %s" --no-merges)
+
+          # Exclude merges, cherry-picks, rebased commits, or cross-branch merges
+          FILTERED_COMMITS=$(echo "$COMMITS" | grep -Ev "Merge branch|Merge pull request|from feature/|from release/|from hotfix/|cherry picked from commit" || true)
+
+          # Remove duplicate SHAs in case of rebase
+          UNIQUE_COMMITS=$(echo "$FILTERED_COMMITS" | awk '!seen[$1]++')
+
+          echo "Filtered commits (direct commits only):"
+          echo "$UNIQUE_COMMITS"
+
+          {
+            echo "COMMITS<<EOF"
+            echo "$UNIQUE_COMMITS"
+            echo "EOF"
+          } >> $GITHUB_ENV
+
+      - name: Create release via GitHub API
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.next_tag.outputs.next_tag }}
-          TARGET_SHA: ${{ steps.get_sha.outputs.commit_sha }}
+          GH_: ${{ secrets.SUNIL2_TOKEN }}
         run: |
-          # If tag already existed we still proceed to create a release (or you can skip if desired)
-          API="$GITHUB_API/repos/$REPO/releases"
-          PAYLOAD=$(jq -n \
-            --arg tag "$TAG" \
-            --arg target "$TARGET_SHA" \
-            --arg name "Sprint Release $TAG" \
-            --arg body "Release created from $TARGET_BRANCH commit: $TARGET_SHA\nTriggered by PR: ${{ github.event.pull_request.title }}" \
-            '{ tag_name: $tag, target_commitish: $target, name: $name, body: $body, generate_release_notes: true, draft: false, prerelease: false }')
+          echo "Creating release with tag: $NEW_TAG"
+          API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
 
-          echo "Creating release for $TAG pointing at $TARGET_SHA"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API" \
-            -H "Authorization: token $GITHUB_TOKEN" \
+          RELEASE_BODY=$(printf "%s\n\nCommits in this release:\n%s" \
+            "Automated release notes for ${NEW_TAG}" \
+            "${COMMITS}")
+
+          curl -s -X POST "$API_URL" \
+            -H "Authorization: Bearer $GH_" \
             -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+            -d "{
+              \"tag_name\": \"$NEW_TAG\",
+              \"target_commitish\": \"${TARGET_BRANCH}\",
+              \"name\": \"$NEW_TAG\",
+              \"body\": \"$RELEASE_BODY\",
+              \"generate_release_notes\": true
+            }"
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
-
-          echo "HTTP code: $HTTP_CODE"
-          echo "$RESPONSE_BODY"
-
-          if [ "$HTTP_CODE" -eq 201 ]; then
-            echo "Release created successfully."
-          elif [ "$HTTP_CODE" -eq 422 ]; then
-            # 422 can mean release already exists for that tag — handle gracefully
-            echo "Release creation failed with 422. Checking if release exists..."
-            # try to find an existing release by tag
-            EXISTING=$(curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-            if echo "$EXISTING" | jq -e '.id' >/dev/null 2>&1; then
-              echo "A release for $TAG already exists. Exiting OK."
-            else
-              echo "422 but no existing release detected. Response:"
-              echo "$EXISTING"
-              exit 1
-            fi
-          else
-            echo "Failed to create release (HTTP $HTTP_CODE)"
-            exit 1
-          fi
+      - name: Confirm release creation
+        run: echo "Release $NEW_TAG created successfully for branch ${TARGET_BRANCH}"
